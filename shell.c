@@ -9,7 +9,6 @@
 
 #define MAX_BUFFER 1024                        // max line buffer
 #define MAX_ARGS 64                            // max # args
-#define MAX_HISTORY 15
 #define SEPARATORS " \t\n"                     // token sparators
 #define DEFAULT_PATH "/home/za643519"
 
@@ -19,8 +18,10 @@ char * args[MAX_ARGS];                     // pointers to arg strings
 char ** arg;                               // working pointer thru args
 char * prompt = "#";                       // shell prompt
 char* cwd;
-char history[MAX_HISTORY][MAX_ARGS];
+char history[MAX_BUFFER][MAX_ARGS];
+int pids[MAX_BUFFER];
 int historyIndex = 0;
+int pidIndex = 0;
 
 //Method Prototypes
 void AppendDirectory(char * runpath);
@@ -33,11 +34,12 @@ int main (int argc, char ** argv)
 {
     int i;
     // Initialize Current Working Directory
-    cwd = malloc(strlen("/home/za643519"));
+    cwd = malloc(MAX_BUFFER);
+    getcwd(cwd, sizeof(cwd));
     // Initialize default path
-    strcpy(cwd, DEFAULT_PATH);
+    //strcpy(cwd, DEFAULT_PATH); // TODO I don't think we'll need this default path anymore
     // initialize history array
-    for (i=0; i<MAX_HISTORY; i++)
+    for (i=0; i<MAX_BUFFER; i++)
         strcpy(history[i], "");
 
     // keep reading input until "quit" command or eof of redirected input
@@ -56,13 +58,16 @@ int main (int argc, char ** argv)
             if (!args[0])
                 break;
 
-// TODO What happens when history commands goes over 15?
             arg = args;
             while (*arg){
                 strcat(history[historyIndex],*arg++);
                 strcat(history[historyIndex], " ");
             }
             historyIndex++;
+
+            // Reset history if we reach the max. Shouldn't happen really ever.
+            if(historyIndex >= MAX_BUFFER)
+                historyIndex = 0;
 
             // Check if the command is a recognized command:
 
@@ -97,13 +102,40 @@ int main (int argc, char ** argv)
 
             // Run in background command
             else if (!strcmp(args[0], "background")){
-                BackgroundRunCommand();
+                BackgroundRunCommand(0);
             }
 
             // Kill a particular process
             else if (!strcmp(args[0], "murder")){
                 if(!kill(atoi(args[1]), SIGKILL))
-                    printf("Success! The PID is dead.");
+                    printf("Success! The PID is dead.\n");
+            }
+
+            // Run a command multiple times
+            else if (!strcmp(args[0], "repeat")){
+                int n = atoi(args[1]);
+                for (i = 0; i<n; i++)
+                    BackgroundRunCommand(1);
+            }
+
+            else if (!strcmp(args[0], "murder")){
+                if(!kill(atoi(args[1]), SIGKILL))
+                    printf("Success! The PID is dead.\n");
+                else
+                    printf("Failure. Pid was not killed. It may not exist.\n");
+            }
+
+            else if (!strcmp(args[0], "murderall")){
+                if (pidIndex > 0)
+                    printf("Murdering %d processes", pidIndex);
+                else
+                    printf("No processes to murder");
+                for (i = 0; i<pidIndex; i++){
+                    kill(pids[i], SIGKILL);
+                    printf(" %d", pids[i]);
+                }
+                printf("\n");
+                pidIndex = 0;
             }
 
             // Command is unknown
@@ -127,12 +159,10 @@ void AppendDirectory(char * runpath){
         char * temp = malloc(strlen(cwd) + 1);
         strcpy(temp, cwd);
 
-        printf("We got here with runpath |%s|\n", runpath);
         char *chptr = strrchr(cwd, '/');
         int index = chptr - cwd;
         temp[index] = '\0';
         strcpy(runpath, temp);
-        printf("Yo: %s\n", runpath);
     }
 
     // Check if we are appending to directory, or replacing it
@@ -187,7 +217,7 @@ void HistoryCommand() {
     int i  = 0;
 
     if (args[1] && !strcmp(args[1], "-c")){
-        for (i=0; i<MAX_HISTORY; i++)
+        for (i=0; i<MAX_BUFFER; i++)
             strcpy(history[i], "");
         historyIndex = 0;
         return;
@@ -199,73 +229,9 @@ void HistoryCommand() {
 
 void RunCommand() {
 
-    char * arguments[MAX_ARGS];
-    int i = 1;
-
-    // We want all the arguments but the initial "run" command
-    while (args[i]){
-        arguments[i-1] = args[i];
-        i++;
-    }
-    // Add a null terminatory so execv knows when to stop
-    arguments[i-1] = '\0';
-
-    char * runpath = malloc(sizeof(char) * (strlen(args[1]) + 1));
-    strcpy(runpath, args[1]);
-
-    AppendDirectory(runpath);
-
-    // Child to run program
-    pid_t my_pid, parent_pid, child_pid;
-    int status;
-
-    /* get and print my pid and my parent's pid. */
-
-    my_pid = getpid();    parent_pid = getppid();
-    printf("\n Parent: my pid is %d\n\n", my_pid);
-    printf("Parent: my parent's pid is %d\n\n", parent_pid);
-
-    /* print error message if fork() fails */
-    if((child_pid = fork()) < 0 )
-    {
-      perror("fork failure");
-      exit(1);
-    }
-
-    /* fork() == 0 for child process */
-
-    if(child_pid == 0){
-        printf("\nChild: I am a new-born process!\n\n");
-        my_pid = getpid();    parent_pid = getppid();
-        printf("Child: my pid is: %d\n\n", my_pid);
-        printf("Child: my parent's pid is: %d\n\n", parent_pid);
-
-        printf("Child: Now, I woke up and am executing given command \n\n");
-        execv(runpath, arguments);
-        //execl("/home/za643519/myfolder/helloworld", "helloworld", 0, 0, NULL);
-        perror("execl() failure!\n\n");
-
-        printf("This print is after execl() and should not have been executed if execl were successful! \n\n");
-
-        _exit(1);
-    }
-    /*
-    * parent process
-    */
-    else
-    {
-        printf("\nParent: I created a child process.\n\n");
-        printf("Parent: my child's pid is: %d\n\n", child_pid);
-        //system("ps -acefl | grep ercal");  printf("\n \n");
-        wait(&status); /* can use wait(NULL) since exit status from child is not used. */
-        printf("\n Parent: my child is dead. I am going to leave.\n \n ");
-    }
-}
-
-void BackgroundRunCommand() {
-
+    // Check that we have arguments
     if (args[1] == NULL){
-        printf("Error, Expected Argument following cd\n");
+        printf("Error, Expected Argument following run\n");
         return;
     }
 
@@ -286,48 +252,88 @@ void BackgroundRunCommand() {
     AppendDirectory(runpath);
 
     // Child to run program
-    pid_t my_pid, parent_pid, child_pid;
-    int status;
+    pid_t child_pid;
 
-    /* get and print my pid and my parent's pid. */
-
-    my_pid = getpid();    parent_pid = getppid();
-    printf("\n Parent: my pid is %d\n\n", my_pid);
-    printf("Parent: my parent's pid is %d\n\n", parent_pid);
-
-    /* print error message if fork() fails */
+    // Print error if fork fails
     if((child_pid = fork()) < 0 )
     {
-      perror("fork failure");
-      exit(1);
+      printf("Failure with Fork\n");
+      return;
     }
 
-    /* fork() == 0 for child process */
-
+    // If we have the child pid
     if(child_pid == 0){
-        printf("\nChild: I am a new-born process!\n\n");
-        my_pid = getpid();    parent_pid = getppid();
-        printf("Child: my pid is: %d\n\n", my_pid);
-        printf("Child: my parent's pid is: %d\n\n", parent_pid);
-
-        printf("Child: Now, I woke up and am executing given command \n\n");
+        // Run the program
         execv(runpath, arguments);
-        //execl("/home/za643519/myfolder/helloworld", "helloworld", 0, 0, NULL);
-        perror("execl() failure!\n\n");
 
-        printf("This print is after execl() and should not have been executed if execl were successful! \n\n");
-
-        _exit(1);
+        // We shouldn't get here ever, unless there was an error
+        printf("Error, program failed to execute.\n");
+        return;
     }
-    /*
-    * parent process
-    */
+
+    // Parent process
     else
     {
-        printf("\nParent: I created a child process.\n\n");
-        printf("Parent: my child's pid is: %d\n\n", child_pid);
-        //system("ps -acefl | grep ercal");  printf("\n \n");
-        //wait(&status); /* can use wait(NULL) since exit status from child is not used. */
-        printf("\n Parent: my child is dead. I am going to leave.\n \n ");
+        // Wait for child to finish
+        wait(NULL);
+    }
+}
+
+// The 'multiple' parameter determines if this method is called by background command
+// or the repeat command. The arguments are in different indexies for each.
+void BackgroundRunCommand(int multiple) {
+
+    // Check that we have arguments
+    if (args[1] == NULL){
+        printf("Error, Expected Argument following command\n");
+        return;
+    }
+
+    // Depending on if we get the command repeat n program or run program,
+    // the argument indexies are different.
+    char * arguments[MAX_ARGS];
+    int i = 1;
+    int j = 1;
+    if(multiple == 1){
+        i++;
+        j++;
+    }
+
+    // We want all the arguments but the initial "run" command
+    while (args[i]){
+        arguments[i-j] = args[i];
+        i++;
+    }
+
+    // Add a null terminatory so execv knows when to stop
+    arguments[i-j] = '\0';
+
+    char * runpath = malloc(sizeof(char) * (strlen(args[j]) + 1));
+    strcpy(runpath, args[j]);
+
+    AppendDirectory(runpath);
+
+    // Child to run program
+    pid_t child_pid;
+
+    // Print an error if the fork failed
+    if((child_pid = fork()) < 0 )
+    {
+        // We shouldn't get here ever, unless there was an error
+        printf("Error, program failed to execute.\n");
+        return;
+    }
+
+    if(child_pid == 0){
+        execv(runpath, arguments);
+        // We shouldn't get here unless it failed to execute.
+        printf("Error: Program failed to execute.");
+        return;
+    }
+    else{
+        // Print the newly created Child Pid
+        printf("Newly Created Pid: %d\n", child_pid);
+        pids[pidIndex] = child_pid;
+        pidIndex++;
     }
 }
